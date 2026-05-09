@@ -90,54 +90,71 @@ footer { display: none !important; }
 
 /* Premium Custom Product Card */
 div[data-testid="column"]:has([title="RemoveCard"]) {
-    position: relative;
-    background: #ffffff;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-    padding: 10px;
-    padding-top: 10px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.04);
-    margin-bottom: 16px;
-    transition: all 0.25s ease-in-out;
+    position: relative !important;
+    background: #ffffff !important;
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 4px !important; /* Sharper corners like Jumia */
+    padding: 8px !important;
+    overflow: visible !important; /* CRUCIAL: Allows the X to bleed outside the box */
+    margin-top: 10px !important; /* Creates breathing room for the floating X */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04) !important;
+    transition: all 0.2s ease-in-out;
     animation: fadeSlideUp 0.4s ease-out forwards;
 }
 div[data-testid="column"]:has([title="RemoveCard"]):hover {
-    transform: translateY(-4px);
-    box-shadow: 0 10px 20px rgba(246,139,30,0.12);
-    border-color: #F68B1E;
+    transform: translateY(-3px);
+    box-shadow: 0 8px 16px rgba(246,139,30,0.12) !important;
+    border-color: #F68B1E !important;
 }
 
-/* Floating Close Button - Styled Orange Overlay half touching */
-div[data-testid="stTooltipHoverTarget"]:has([title="RemoveCard"]),
-div[title="RemoveCard"] {
+/* Floating Close Button */
+div[data-testid="element-container"]:has([title="RemoveCard"]) {
     position: absolute !important;
-    top: -12px !important;
-    right: -12px !important;
+    top: -13px !important; 
+    right: -13px !important;
     z-index: 999 !important;
-    width: auto !important;
+    width: 26px !important;
+    height: 26px !important;
 }
-button[title="RemoveCard"], div[title="RemoveCard"] > button {
+
+/* Style the circular orange button */
+[title="RemoveCard"] button, 
+button[title="RemoveCard"] {
     background: #F68B1E !important;
     color: white !important;
     border: 2px solid white !important;
     border-radius: 50% !important;
-    width: 24px !important;
-    height: 24px !important;
-    min-height: 24px !important;
-    min-width: 24px !important;
+    width: 26px !important;
+    height: 26px !important;
+    min-height: 26px !important;
+    min-width: 26px !important;
     padding: 0 !important;
+    margin: 0 !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2) !important;
-    font-weight: 900;
-    font-size: 12px !important;
-    transition: transform 0.2s ease, background 0.2s ease !important;
-    line-height: 1 !important;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.25) !important;
+    font-weight: 900 !important;
+    font-size: 13px !important;
+    transition: transform 0.15s ease, background 0.15s ease !important;
 }
-button[title="RemoveCard"]:hover, div[title="RemoveCard"] > button:hover {
+
+[title="RemoveCard"] button:hover, 
+button[title="RemoveCard"]:hover {
     background: #D4730A !important;
     transform: scale(1.15) !important;
+}
+
+/* Fixes Streamlit's internal paragraph tag alignment */
+[title="RemoveCard"] button p, 
+button[title="RemoveCard"] p {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin-top: -1px !important; /* Optical centering for the ✖ character */
 }
 
 [data-testid="stImage"] img { border-radius: 8px; border: 1px solid #f0f0f0; }
@@ -170,6 +187,7 @@ def extract_category_links(category_url: str, max_pages: int = 1) -> list:
                 for a in soup.select("article.prd a.core"):
                     href = a.get("href")
                     if href and ".html" in href:
+                        from urllib.parse import urljoin
                         extracted.append(urljoin(current_url, href))
         except Exception as e:
             st.warning(f"Error fetching category page {page}: {e}")
@@ -586,7 +604,7 @@ with tab_analyze:
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Total Analyzed", len(df))
         m2.metric("Refurbished",   int((df.get("Title has Refurbished","NO") == "YES").sum()))
-        m3.metric("Auth Sellers",  int((df.get("Seller authorized","NO")     == "YES").sum()))
+        m3.metric("Auth Sellers",  int((df.get("Seller authorized","NO")      == "YES").sum()))
         m4.metric("Red Badges",    int(df.get("grading tag","").str.contains("YES", na=False).sum()))
         m5.metric("Avg Images",    f"{df.get('Total Product Images',pd.Series([0])).mean():.1f}")
         st.markdown("---")
@@ -912,7 +930,6 @@ with tab_bulk:
         if st.button("Extract & Load Images", type="primary", key="b_cat_load"):
             if cat_url_bulk.strip():
                 with st.spinner("Extracting images from category..."):
-                    from scraper import extract_category_images
                     extracted_imgs = extract_category_images(cat_url_bulk.strip(), max_cat_pages_bulk)
                     if not extracted_imgs:
                         st.warning("No images found.")
@@ -1168,7 +1185,6 @@ with tab_convert:
             if st.button("Extract & Load Images", type="primary", key="cv_b_cat_load"):
                 if cat_url_bulk.strip():
                     with st.spinner("Extracting images from category..."):
-                        from scraper import extract_category_images
                         extracted_imgs = extract_category_images(cat_url_bulk.strip(), max_cat_pages_bulk)
                         if not extracted_imgs:
                             st.warning("No images found.")
