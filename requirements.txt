@@ -1,0 +1,46 @@
+# Core dependencies
+streamlit>=1.35.0
+pandas>=2.0.0
+numpy
+
+# Web scraping
+selenium>=4.15.0
+beautifulsoup4>=4.12.0
+webdriver-manager>=4.0.0
+
+# File handling
+openpyxl
+xlrd
+xlsxwriter
+odfpy
+
+# Visualization
+altair<5
+plotly
+matplotlib
+pydeck
+
+# Data processing
+fuzzywuzzy
+
+# API/Network
+aiohttp
+websockets
+requests
+
+# Image processing
+Pillow
+
+# Auth
+streamlit-authenticator
+python-dotenv
+
+# UI Components
+streamlit-aggrid
+lxml>=4.9.0
+
+# Critical: Protobuf version for Streamlit compatibility
+protobuf==3.20.3
+opencv-python-headless
+streamlit-cropper
+cloudscraper
