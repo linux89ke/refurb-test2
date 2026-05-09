@@ -50,15 +50,23 @@ def extract_category(url: str) -> str:
     if not url or "http" not in url:
         return "N/A"
     try:
-        r = _SESSION.get(url, timeout=15)
+        # Added a User-Agent so Jumia is less likely to block the direct python request
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        r = _SESSION.get(url, timeout=15, headers=headers)
         if r.ok:
             soup = BeautifulSoup(r.content, "html.parser")
-            # Search for the div containing the 'brcbs' class
-            breadcrumb_div = soup.find("div", class_=lambda c: c and "brcbs" in c.split())
-            if breadcrumb_div:
-                # Find all the category links inside it
-                category_links = breadcrumb_div.find_all("a", class_="cbs")
-                
+            
+            # Use native CSS selector: it is much safer than lambda class matching
+            category_links = soup.select(".brcbs a.cbs")
+            
+            # If for some reason .brcbs is missing but .cbs anchors exist, fallback to broader selector
+            if not category_links:
+                category_links = soup.select("a.cbs")
+            
+            if category_links:
                 # Extract the text and filter out the 'Home' link
                 cat_list = [
                     a.get_text(strip=True) 
