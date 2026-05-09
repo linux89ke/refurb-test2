@@ -1,4 +1,5 @@
 import re
+import json
 from urllib.parse import urljoin
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -50,30 +51,49 @@ def extract_category(url: str) -> str:
     if not url or "http" not in url:
         return "N/A"
     try:
-        # Added a User-Agent so Jumia is less likely to block the direct python request
+        # Added extended headers to bypass basic bot-protection blocks
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Upgrade-Insecure-Requests": "1"
         }
         r = _SESSION.get(url, timeout=15, headers=headers)
         if r.ok:
             soup = BeautifulSoup(r.content, "html.parser")
             
-            # Use native CSS selector: it is much safer than lambda class matching
-            category_links = soup.select(".brcbs a.cbs")
+            # Method 1: Try JSON-LD schema (Very reliable, SEO standard)
+            for script in soup.find_all("script", type="application/ld+json"):
+                try:
+                    data = json.loads(script.string)
+                    if isinstance(data, dict) and data.get("@type") == "BreadcrumbList":
+                        items = data.get("itemListElement", [])
+                        items = sorted(items, key=lambda x: x.get("position", 0))
+                        cat_list = [item.get("name") for item in items if item.get("name") and item.get("name").lower() != "home"]
+                        if cat_list:
+                            return " > ".join(cat_list)
+                except Exception:
+                    continue
             
-            # If for some reason .brcbs is missing but .cbs anchors exist, fallback to broader selector
-            if not category_links:
-                category_links = soup.select("a.cbs")
-            
+            # Method 2: Try Jumia tracking attributes (Highly reliable)
+            cat_el = soup.find(attrs={"data-category": True})
+            if cat_el and cat_el.get("data-category"):
+                cat_path = cat_el.get("data-category")
+                parts = [p.strip() for p in cat_path.split("/") if p.strip() and p.strip().lower() != "home"]
+                if parts:
+                    return " > ".join(parts)
+
+            # Method 3: Native CSS selectors (.brcbs a.cbs)
+            category_links = soup.select(".brcbs a.cbs, a.cbs")
             if category_links:
-                # Extract the text and filter out the 'Home' link
                 cat_list = [
                     a.get_text(strip=True) 
                     for a in category_links 
                     if a.get_text(strip=True) and a.get_text(strip=True).lower() != "home"
                 ]
-                
                 if cat_list:
                     return " > ".join(cat_list)
     except Exception:
