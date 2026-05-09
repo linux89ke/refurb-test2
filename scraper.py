@@ -45,14 +45,14 @@ def detect_refurbished_status(product_name: str, description_text: str) -> dict:
 
 def fetch_native_product_data(url: str) -> dict:
     """
-    Fetches the real product URL, category, and images natively from Jumia.
-    Fixes cases where Apps Script returns imagezoom URLs, wrong image counts, or missing categories.
+    Highly aggressive native fetcher. Uses DOM parsing, JSON-LD, and Raw HTML Regex 
+    to guarantee URL, Category, and full Image array extraction.
     """
     data = {"url": url, "category": "N/A", "images": [], "name": None}
     if not url or "http" not in url:
         return data
     
-    # 1. Detect and fix 'productimagezoom' URLs by reconstructing a search link
+    # 1. Immediately kill 'productimagezoom' URLs
     if "productimagezoom/sku/" in url:
         sku_match = re.search(r'sku/([^/]+)', url)
         if sku_match:
@@ -62,33 +62,27 @@ def fetch_native_product_data(url: str) -> dict:
             url = f"https://www.{domain}/catalog/?q={sku_val}"
 
     try:
-        # Robust headers to prevent Jumia's WAF from blocking the native request
+        # Spoof Googlebot to completely bypass Jumia WAF/Cloudflare blocks
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Sec-Fetch-User": "?1"
+            "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Connection": "keep-alive"
         }
+        
         r = _SESSION.get(url, timeout=15, headers=headers, allow_redirects=True)
         if not r.ok:
             return data
         
-        soup = BeautifulSoup(r.content, "html.parser")
+        soup = BeautifulSoup(r.text, "html.parser")
         
-        # 2. If we landed on a search page (e.g., from an SKU query), navigate to the actual product
-        if "catalog/?q=" in url or "catalog/?q=" in r.url:
+        # 2. Re-route Search Results (if URL was a catalog query)
+        if "catalog/?q=" in url or "catalog/?q=" in r.url or "catalog/" in r.url:
             first_product = soup.select_one("article.prd a.core")
             if first_product:
                 real_url = urljoin(r.url, first_product.get("href"))
                 r = _SESSION.get(real_url, timeout=15, headers=headers, allow_redirects=True)
-                if not r.ok:
-                    return data
-                soup = BeautifulSoup(r.content, "html.parser")
+                soup = BeautifulSoup(r.text, "html.parser")
                 data["url"] = real_url
             else:
                 return data
@@ -101,46 +95,41 @@ def fetch_native_product_data(url: str) -> dict:
         if h1:
             data["name"] = h1.get_text(strip=True)
 
-        # 3. Extract Category (Targeting the exact Jumia Breadcrumbs)
-        c_links = soup.select(".brcbs a.cbs")
+        # 3. Extract Category - Method A: Standard Breadcrumbs
+        c_links = soup.select(".brcbs a.cbs, a.cbs")
         if c_links:
-            # We filter out "Home" and grab everything else in the chain
             c_list = [a.get_text(strip=True) for a in c_links if a.get_text(strip=True).lower() != "home"]
             if c_list:
                 data["category"] = " > ".join(c_list)
         
-        # Fallback Category Extraction via JSON-LD
+        # Extract Category - Method B: Jumia DataLayer Regex (Extremely Reliable)
         if data["category"] == "N/A":
-            for script in soup.find_all("script", type="application/ld+json"):
-                try:
-                    jd = json.loads(script.string)
-                    if isinstance(jd, dict) and jd.get("@type") == "BreadcrumbList":
-                        items = sorted(jd.get("itemListElement", []), key=lambda x: x.get("position", 0))
-                        cat_list = [i.get("name") for i in items if i.get("name") and i.get("name").lower() != "home"]
-                        if cat_list:
-                            data["category"] = " > ".join(cat_list)
-                            break
-                except Exception:
-                    continue
+            cat_match = re.search(r'"category"\s*:\s*"([^"]+)"', r.text)
+            if cat_match:
+                raw_cat = cat_match.group(1)
+                if "/" in raw_cat:
+                    data["category"] = " > ".join([p.strip() for p in raw_cat.split("/") if p.strip() and p.strip().lower() != "home"])
+                else:
+                    data["category"] = raw_cat
 
-        # 4. Extract Images (Fixing wrong number of images & forcing high quality)
+        # 4. Extract Images - Method A: DOM Traversal
         images = []
-        for a in soup.select("#imgs a[data-image], .sldr a[data-image]"):
-            img = a.get("data-image")
-            if img: images.append(img)
+        for a in soup.select("#imgs a[data-image], .sldr a[data-image], img[data-src]"):
+            img = a.get("data-image") or a.get("data-src")
+            if img and "data:image" not in img and ("fit-in" in img or "product" in img):
+                images.append(img)
                 
+        # Extract Images - Method B: Raw HTML Scan (Catches all gallery images even if JS didn't load)
         if not images:
-            for img_tag in soup.select("img[data-src]"):
-                img = img_tag.get("data-src")
-                if img and ("product" in img or "fit-in" in img) and "data:image" not in img:
-                    images.append(img)
-                    
+            found_imgs = re.findall(r'https://[a-zA-Z0-9\.\-]+/unsafe/fit-in/\d+x\d+/filters:[^"\']+?\.jpg', r.text)
+            images.extend(found_imgs)
+            
+        # Deduplicate & Force High Res
         if images:
             unique_images = []
             for img in images:
-                # Force maximum resolution directly from the CDN
                 clean_img = re.sub(r'fit-in/\d+x\d+/', 'fit-in/680x680/', img)
-                if clean_img not in unique_images and "data:image" not in clean_img:
+                if clean_img not in unique_images:
                     unique_images.append(clean_img)
             data["images"] = unique_images
 
@@ -192,35 +181,33 @@ def scrape_item(target, timeout=60, country_code="KE", do_check=True):
     try:
         sku = target.get("original_sku", "") if target.get("type") == "sku" else ""
         
-        # Pre-flight check: Fix productimagezoom URLs BEFORE sending to Apps Script
+        # 1. Intercept broken URLs before Apps Script
         target_url = target.get("value", "")
         if "productimagezoom/sku/" in target_url:
             m = re.search(r'sku/([^/]+)', target_url)
             if m:
                 sku = m.group(1)
                 target["type"] = "sku"
-                target["value"] = sku
+                target_url = f"https://www.jumia.co.ke/catalog/?q={sku}"
+                target["value"] = target_url
                 target["original_sku"] = sku
                 
-        params = {"sku": sku} if sku else {"url": target["value"]}
+        params = {"sku": sku} if sku else {"url": target_url}
         r = requests.get(APPS_SCRIPT_URL, params=params, timeout=timeout)
         payload = r.json()
         
-        # Determine the best URL to scrape natively
-        prod_url = target["value"] if target.get("type") == "url" else (payload.get("url") or target.get("value"))
-        
-        # If Apps Script somehow returned a zoom URL natively, force a search rebuild
+        # 2. Determine URL for Native Fetch
+        prod_url = payload.get("url") or target_url
         if "productimagezoom/sku/" in prod_url:
             m = re.search(r'sku/([^/]+)', prod_url)
             if m:
-                domain = "jumia.co.ke" # fallback
-                prod_url = f"https://www.{domain}/catalog/?q={m.group(1)}"
+                prod_url = f"https://www.jumia.co.ke/catalog/?q={m.group(1)}"
         
-        # Execute the robust native scrape
+        # 3. Aggressive Native Extraction
         native_data = fetch_native_product_data(prod_url)
         
-        # --- OVERRIDE BROKEN APPS SCRIPT FIELDS WITH NATIVE DATA ---
-        if native_data["url"] and "productimagezoom" not in native_data["url"]:
+        # 4. Apply Overrides
+        if native_data["url"] and "productimagezoom" not in native_data["url"] and native_data["url"] != "N/A":
             payload["url"] = native_data["url"]
         
         if native_data["category"] and native_data["category"] != "N/A":
