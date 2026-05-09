@@ -42,6 +42,36 @@ def detect_refurbished_status(product_name: str, description_text: str) -> dict:
             data["refurb_indicators"].append(f"Keyword: {kw}")
     return data
 
+def extract_category(url: str) -> str:
+    """
+    Extracts the product category breadcrumb directly from the Jumia product page.
+    Fallback for when the Apps Script payload misses it.
+    """
+    if not url or "http" not in url:
+        return "N/A"
+    try:
+        r = _SESSION.get(url, timeout=15)
+        if r.ok:
+            soup = BeautifulSoup(r.content, "html.parser")
+            # Search for the div containing the 'brcbs' class
+            breadcrumb_div = soup.find("div", class_=lambda c: c and "brcbs" in c.split())
+            if breadcrumb_div:
+                # Find all the category links inside it
+                category_links = breadcrumb_div.find_all("a", class_="cbs")
+                
+                # Extract the text and filter out the 'Home' link
+                cat_list = [
+                    a.get_text(strip=True) 
+                    for a in category_links 
+                    if a.get_text(strip=True) and a.get_text(strip=True).lower() != "home"
+                ]
+                
+                if cat_list:
+                    return " > ".join(cat_list)
+    except Exception:
+        pass
+    return "N/A"
+
 def apps_script_payload_to_original_data(payload: dict, target: dict, country_code: str = "KE") -> dict:
     name = payload.get("name") or payload.get("title") or "N/A"
     sku = str(payload.get("sku") or target.get("original_sku") or "N/A").upper()
@@ -87,6 +117,14 @@ def scrape_item(target, timeout=60, country_code="KE", do_check=True):
         params = {"sku": sku} if sku else {"url": target["value"]}
         r = requests.get(APPS_SCRIPT_URL, params=params, timeout=timeout)
         payload = r.json()
+        
+        # --- FIX: Direct HTML parsing fallback for category ---
+        cat = payload.get("category")
+        if not cat or cat == "N/A" or cat.strip() == "":
+            prod_url = payload.get("url") or target.get("value")
+            if prod_url:
+                payload["category"] = extract_category(prod_url)
+                
         data = apps_script_payload_to_original_data(payload, target, country_code)
         if do_check: data = _run_image_checks_parallel(data)
         return data
